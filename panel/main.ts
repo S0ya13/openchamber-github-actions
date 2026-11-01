@@ -345,7 +345,7 @@ function render(): void {
   if (!state.connected) {
     mountEmpty(shell, {
       title: 'Connect GitHub',
-      body: 'Open Settings → Integrations → GitHub Actions and paste a GitHub token. Fine-grained: Actions (read and write), Checks (read), Metadata (read). Classic: the repo scope.',
+      body: 'Open Settings → Integrations → GitHub Actions and paste a GitHub token. Classic with the repo scope, or fine-grained with Actions (read and write) and Metadata (read).',
     });
     return;
   }

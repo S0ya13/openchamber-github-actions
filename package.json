@@ -1,6 +1,6 @@
 {
   "name": "github-actions-openchamber",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "OpenChamber panel showing GitHub Actions workflow runs for the open project, with re-run and cancel.",
   "license": "MIT",
@@ -31,7 +31,7 @@
       "filesystem": ["/**/.git/config", "/**/.git/worktrees/*/HEAD"],
       "integration": {
         "name": "GitHub Actions",
-        "description": "Workflow runs of the open project. Paste a GitHub token: fine-grained with Actions (read and write), Checks (read) and Metadata (read), or classic with the repo scope.",
+        "description": "Workflow runs of the open project. Paste a GitHub token: classic with the repo scope (shows error annotations), or fine-grained with Actions (read and write) and Metadata (read).",
         "token": {
           "apiOrigin": "https://api.github.com",
           "account": { "path": "/user", "name": "login" },

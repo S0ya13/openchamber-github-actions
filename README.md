@@ -8,8 +8,8 @@ The panel has no service and stores no token. The token lives in OpenChamber's I
 
 1. OpenChamber → **Settings → Extensions** → **Folder, ZIP, or URL** → paste `https://github.com/S0ya13/openchamber-github-actions` → **Add**, and approve the permissions. The built `panel/main.js` is committed, so nothing needs building. Append a tag (`#v0.1.0`) to pin a version.
 2. **Settings → Integrations → GitHub Actions** → paste a token:
-   - fine-grained (recommended): resource owner = the account or org that owns the repos, repository access to those repos, permissions **Actions: Read and write**, **Checks: Read**, **Metadata: Read**. Actions read-only is enough without the re-run and cancel buttons. An org may need to approve fine-grained tokens first.
-   - classic: the `repo` scope.
+   - classic (full features): the `repo` scope.
+   - fine-grained: resource owner = the account or org that owns the repos, repository access to those repos, permissions **Actions: Read and write** and **Metadata: Read**. Actions read-only is enough without the re-run and cancel buttons. An org may need to approve fine-grained tokens first. GitHub does not let fine-grained tokens read check runs, so the error annotations under failed jobs stay empty; everything else works.
    - quick test: the output of `gh auth token`.
 3. Open the rail icon. The repo comes from the project's GitHub remote (`origin` first); set **Repository override** on the Integrations card when the remote is not on github.com.
 
