@@ -1,0 +1,44 @@
+{
+  "name": "github-actions-openchamber",
+  "version": "0.1.0",
+  "private": true,
+  "description": "OpenChamber panel showing GitHub Actions workflow runs for the open project, with re-run and cancel.",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "build": "openchamber-guest-bundle panel/main.ts panel/main.js",
+    "typecheck": "tsc --noEmit",
+    "check": "bun run typecheck && bun run build && bun test"
+  },
+  "devDependencies": {
+    "@openchamber/sdk": "2.5.3",
+    "@types/bun": "^1.4.4",
+    "typescript": "^7.0.2"
+  },
+  "openchamber": {
+    "apiVersion": 1,
+    "engines": {
+      "openchamber": ">=1.22.0"
+    },
+    "contributes": {
+      "panel": {
+        "id": "github-actions",
+        "name": "GitHub Actions",
+        "icon": "icon.svg",
+        "entry": "panel/index.html"
+      },
+      "capabilities": ["files", "sessions"],
+      "filesystem": ["/**/.git/config", "/**/.git/worktrees/*/HEAD"],
+      "integration": {
+        "name": "GitHub Actions",
+        "description": "Workflow runs of the open project. Paste a GitHub token: fine-grained with Actions (read and write), Checks (read) and Metadata (read), or classic with the repo scope.",
+        "token": {
+          "apiOrigin": "https://api.github.com",
+          "account": { "path": "/user", "name": "login" },
+          "scheme": "bearer"
+        },
+        "settings": [{ "id": "repository", "label": "Repository override (owner/name, optional)" }]
+      }
+    }
+  }
+}
