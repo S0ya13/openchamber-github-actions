@@ -123,6 +123,8 @@ const query = (repo: string, job: string) => new URLSearchParams({ repo, job });
 test('log service answers', async () => {
   expect((await handleLog(query('o/r', 'x'), gh({}))).status).toBe(400);
   expect((await handleLog(query('o/r;rm', '1'), gh({}))).status).toBe(400);
+  expect((await handleLog(query('../r', '1'), gh({}))).status).toBe(400);
+  expect((await handleLog(query('o/..', '1'), gh({}))).status).toBe(400);
   const calls: string[][] = [];
   const ok = await handleLog(query('o/r', '42'), gh({ stdout: 'log' }, calls));
   expect(ok).toEqual({ status: 200, body: JSON.stringify({ text: 'log', truncated: false }) });

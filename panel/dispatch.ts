@@ -4,7 +4,10 @@ import type { DispatchInput } from './github';
 
 export function askInputs(title: string, branch: string, inputs: DispatchInput[]): Promise<Record<string, string> | null> {
   return new Promise((resolve) => {
-    const values: Record<string, string> = Object.fromEntries(inputs.map((input) => [input.name, input.default]));
+    // A boolean without a default is false on GitHub; an empty string would be refused.
+    const values: Record<string, string> = Object.fromEntries(
+      inputs.map((input) => [input.name, input.type === 'boolean' ? String(input.default === 'true') : input.default]),
+    );
     const form = document.createElement('form');
     form.className = 'drawer';
     form.setAttribute('role', 'dialog');
@@ -65,7 +68,8 @@ export function askInputs(title: string, branch: string, inputs: DispatchInput[]
         errors.get(input.name)?.(error);
         if (error) valid = false;
       }
-      if (valid) done(values);
+      // Empty optional inputs are left out, so GitHub applies the workflow's own defaults.
+      if (valid) done(Object.fromEntries(Object.entries(values).filter(([, value]) => value.trim() !== '')));
     };
     const onKey = (event: KeyboardEvent) => {
       if (event.key === 'Escape') done(null);

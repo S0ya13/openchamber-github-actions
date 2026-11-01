@@ -53,7 +53,8 @@ const json = (status: number, value: unknown): Answer => ({ status, body: JSON.s
 export async function handleLog(query: URLSearchParams, gh: GhRunner = runGh): Promise<Answer> {
   const repo = query.get('repo') ?? '';
   const job = query.get('job') ?? '';
-  if (!/^[\w.-]+\/[\w.-]+$/.test(repo) || !/^\d+$/.test(job)) return json(400, { error: 'repo (owner/name) and job (id) are required.' });
+  const validRepo = /^[\w.-]+\/[\w.-]+$/.test(repo) && !repo.split('/').some((part) => /^\.+$/.test(part));
+  if (!validRepo || !/^\d+$/.test(job)) return json(400, { error: 'repo (owner/name) and job (id) are required.' });
 
   const path = `repos/${repo}/actions/jobs/${job}/logs`;
   let result = await gh(['api', '--allow-escape-sequences', path]);

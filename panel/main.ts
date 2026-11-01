@@ -101,12 +101,15 @@ const errorText = (error: unknown) => describeError(error, state.repo);
 async function loadJobs(run: Run): Promise<void> {
   const { jobs } = await api<{ jobs: Job[] }>('GET', runPath(`/runs/${run.id}/jobs`), { per_page: '100' });
   state.jobs.set(run.id, jobs);
-  for (const job of jobs) {
-    if (statusOf(job.status, job.conclusion).tone !== 'error' || state.annotations.has(job.id)) continue;
-    // A job id is also its check run id; annotations carry the error lines GitHub extracted.
-    // Fine-grained tokens cannot read check runs, so a refusal just leaves them empty.
-    state.annotations.set(job.id, await api<Annotation[]>('GET', `/repos/${repoName()}/check-runs/${job.id}/annotations`).catch(() => []));
-  }
+  // A job id is also its check run id; annotations carry the error lines GitHub extracted.
+  // Fine-grained tokens cannot read check runs, so a refusal just leaves them empty.
+  await Promise.all(
+    jobs
+      .filter((job) => statusOf(job.status, job.conclusion).tone === 'error' && !state.annotations.has(job.id))
+      .map(async (job) => {
+        state.annotations.set(job.id, await api<Annotation[]>('GET', `/repos/${repoName()}/check-runs/${job.id}/annotations`).catch(() => []));
+      }),
+  );
 }
 
 /** Workflows a user can start by hand: their file in the open checkout declares `workflow_dispatch`. */
@@ -232,7 +235,9 @@ function setScope(scope: Scope): void {
 }
 
 /** The failed run, its failed jobs and their errors, and what to do about it. */
-function failureReport(run: Run, ask: string): string {
+async function failureReport(run: Run, ask: string): Promise<string> {
+  // A click right after expanding the run can beat its jobs.
+  if (!state.jobs.has(run.id)) await loadJobs(run).catch(() => undefined);
   const failed = (state.jobs.get(run.id) ?? []).filter((job) => statusOf(job.status, job.conclusion).tone === 'error');
   const lines = [
     `The GitHub Actions run "${run.name}" #${run.run_number} failed in ${repoName()}.`,
@@ -250,13 +255,14 @@ function failureReport(run: Run, ask: string): string {
 }
 
 async function debugInSession(run: Run): Promise<void> {
+  const text = await failureReport(run, 'find the root cause in this checkout, and propose a fix.');
   try {
     await host.startSession({
       providerId: PANEL_ID,
       id: String(run.id),
       title: `CI: ${run.name} #${run.run_number} failed`,
       url: run.html_url,
-      text: failureReport(run, 'find the root cause in this checkout, and propose a fix.'),
+      text,
       navigation: 'open',
     });
   } catch (error) {
@@ -266,7 +272,7 @@ async function debugInSession(run: Run): Promise<void> {
 
 /** Hands the failure to the chat already open, so the agent that wrote the change fixes it. */
 async function fixInChat(run: Run): Promise<void> {
-  const text = failureReport(run, 'find the root cause, and fix it.');
+  const text = await failureReport(run, 'find the root cause, and fix it.');
   try {
     await host.compose({ text: text.length > COMPOSE_MAX ? `${text.slice(0, COMPOSE_MAX - 1)}…` : text, mode: 'append' });
     void host.toast({ kind: 'info', message: 'The failure is in the chat box. Send it when ready.' });

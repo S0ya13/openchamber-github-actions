@@ -36,7 +36,8 @@ var json = (status, value) => ({ status, body: JSON.stringify(value) });
 async function handleLog(query, gh = runGh) {
   const repo = query.get("repo") ?? "";
   const job = query.get("job") ?? "";
-  if (!/^[\w.-]+\/[\w.-]+$/.test(repo) || !/^\d+$/.test(job))
+  const validRepo = /^[\w.-]+\/[\w.-]+$/.test(repo) && !repo.split("/").some((part) => /^\.+$/.test(part));
+  if (!validRepo || !/^\d+$/.test(job))
     return json(400, { error: "repo (owner/name) and job (id) are required." });
   const path = `repos/${repo}/actions/jobs/${job}/logs`;
   let result = await gh(["api", "--allow-escape-sequences", path]);

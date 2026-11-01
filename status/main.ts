@@ -50,6 +50,8 @@ function runRow(run: Run): HTMLElement {
 async function refresh(): Promise<void> {
   clearTimeout(timer);
   const mine = ++generation;
+  // Every state, the empty ones too, looks again later: a remote or a branch may appear.
+  timer = setTimeout(() => void refresh(), IDLE_POLL_MS);
   if (!connected) return show([line('Connect GitHub in Settings → Integrations → GitHub Actions.')]);
   target = await resolveRepo(host, settings);
   if (mine !== generation) return;
@@ -74,7 +76,10 @@ async function refresh(): Promise<void> {
     if (mine !== generation) return;
     show([line(describeError(error, target.repo), 'status-error')]);
   }
-  timer = setTimeout(() => void refresh(), active ? ACTIVE_POLL_MS : IDLE_POLL_MS);
+  if (active) {
+    clearTimeout(timer);
+    timer = setTimeout(() => void refresh(), ACTIVE_POLL_MS);
+  }
 }
 
 host.onReady((ctx) => {
@@ -84,6 +89,16 @@ host.onReady((ctx) => {
   connected = ctx.connection.connected;
   settings = ctx.settings;
   if (changed) void refresh();
+});
+host.onConnection((connection) => {
+  if (connection.connected === connected) return;
+  connected = connection.connected;
+  void refresh();
+});
+host.onSettings((next) => {
+  if (JSON.stringify(next) === JSON.stringify(settings)) return;
+  settings = next;
+  void refresh();
 });
 window.addEventListener('beforeunload', () => {
   clearTimeout(timer);
