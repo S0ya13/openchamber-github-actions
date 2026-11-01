@@ -11,5 +11,5 @@
     "verbatimModuleSyntax": true,
     "isolatedModules": true
   },
-  "include": ["panel", "tests"]
+  "include": ["panel", "status", "service", "tests"]
 }

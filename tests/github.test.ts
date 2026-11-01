@@ -4,12 +4,15 @@ import { readFileSync } from 'node:fs';
 import {
   branchFromHead,
   durationBetween,
+  hasWorkflowDispatch,
   linkedGitDirs,
   parseGitHubRemote,
+  parseLog,
   parseRepoSetting,
   repoFromGitConfig,
   statusOf,
 } from '../panel/github';
+import { handleLog, type GhResult, type GhRunner } from '../service/main';
 
 test('manifest parses', () => {
   const result = parseManifestJson(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
@@ -60,4 +63,62 @@ test('status and duration', () => {
   expect(statusOf('completed', 'cancelled').tone).toBe('neutral');
   expect(durationBetween('2026-01-01T00:00:00Z', '2026-01-01T00:02:05Z')).toBe('2m 5s');
   expect(durationBetween(null, null)).toBe('');
+});
+
+test('workflow_dispatch detection', () => {
+  expect(hasWorkflowDispatch('on:\n  push:\n  workflow_dispatch:\n    inputs: {}\n')).toBe(true);
+  expect(hasWorkflowDispatch('on: [push, workflow_dispatch]\n')).toBe(true);
+  expect(hasWorkflowDispatch('on: workflow_dispatch\n')).toBe(true);
+  expect(hasWorkflowDispatch('on: push\n# workflow_dispatch: later\n')).toBe(false);
+  expect(hasWorkflowDispatch('on: push\n')).toBe(false);
+});
+
+test('log parsing', () => {
+  const raw = [
+    '﻿2026-11-01T12:27:18.6735427Z Current runner version',
+    '2026-11-01T12:27:18.6746573Z ##[group]Run tests',
+    '2026-11-01T12:27:19.0000000Z [command]/usr/bin/git version',
+    '2026-11-01T12:27:19.1000000Z \x1b[31mred\x1b[0m text',
+    '2026-11-01T12:27:19.2000000Z ##[endgroup]',
+    '2026-11-01T12:27:19.3000000Z ##[error]Process completed with exit code 1.',
+    '',
+  ].join('\n');
+  expect(parseLog(raw)).toEqual([
+    { text: 'Current runner version', kind: 'plain' },
+    { text: 'Run tests', kind: 'group' },
+    { text: '/usr/bin/git version', kind: 'command' },
+    { text: 'red text', kind: 'plain' },
+    { text: 'Process completed with exit code 1.', kind: 'error' },
+  ]);
+});
+
+const gh = (result: Partial<GhResult>, calls: string[][] = []): GhRunner => async (args) => {
+  calls.push(args);
+  return { code: 0, stdout: '', stderr: '', missing: false, truncated: false, ...result };
+};
+const query = (repo: string, job: string) => new URLSearchParams({ repo, job });
+
+test('log service answers', async () => {
+  expect((await handleLog(query('o/r', 'x'), gh({}))).status).toBe(400);
+  expect((await handleLog(query('o/r;rm', '1'), gh({}))).status).toBe(400);
+  const calls: string[][] = [];
+  const ok = await handleLog(query('o/r', '42'), gh({ stdout: 'log' }, calls));
+  expect(ok).toEqual({ status: 200, body: JSON.stringify({ text: 'log', truncated: false }) });
+  expect(calls[0]).toEqual(['api', '--allow-escape-sequences', 'repos/o/r/actions/jobs/42/logs']);
+  expect(JSON.parse((await handleLog(query('o/r', '42'), gh({ stdout: 'partial\nrest', truncated: true }))).body).text).toBe('rest');
+  expect((await handleLog(query('o/r', '42'), gh({ code: null, missing: true }))).status).toBe(424);
+  expect((await handleLog(query('o/r', '42'), gh({ code: 1, stdout: '<Code>BlobNotFound</Code>', stderr: 'gh: HTTP 404' }))).status).toBe(404);
+  expect((await handleLog(query('o/r', '42'), gh({ code: 4, stderr: 'To get started with GitHub CLI, please run:  gh auth login' }))).status).toBe(401);
+});
+
+test('log service falls back on old gh', async () => {
+  const calls: string[][] = [];
+  let first = true;
+  const runner: GhRunner = async (args) => {
+    calls.push(args);
+    if (first) return (first = false), { code: 1, stdout: '', stderr: 'unknown flag: --allow-escape-sequences', missing: false, truncated: false };
+    return { code: 0, stdout: 'log', stderr: '', missing: false, truncated: false };
+  };
+  expect((await handleLog(query('o/r', '7'), runner)).status).toBe(200);
+  expect(calls[1]).toEqual(['api', 'repos/o/r/actions/jobs/7/logs']);
 });

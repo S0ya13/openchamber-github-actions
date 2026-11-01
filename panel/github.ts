@@ -99,6 +99,39 @@ export function durationBetween(start: string | null | undefined, end: string | 
   return Number.isFinite(from) && Number.isFinite(to) ? formatDuration(to - from) : '';
 }
 
+/** True when a workflow file can be started by hand (`on: workflow_dispatch` in any of its forms). */
+export function hasWorkflowDispatch(yaml: string): boolean {
+  return /^[^#\n]*\bworkflow_dispatch\b/m.test(yaml);
+}
+
+export type LogLine = { text: string; kind: 'plain' | 'error' | 'warning' | 'group' | 'command' };
+
+/**
+ * A job log as GitHub serves it: every line led by an ISO timestamp, ANSI colors,
+ * and `##[error]` / `##[warning]` / `##[group]` workflow markers. Drops the
+ * timestamp, colors and `##[endgroup]`, and tags each line by its marker.
+ */
+export function parseLog(raw: string): LogLine[] {
+  const lines: LogLine[] = [];
+  for (const rawLine of raw.replace(/^﻿/, '').split(/\r?\n/)) {
+    let text = rawLine.replace(/^\d{4}-\d\d-\d\dT[\d:.]+Z ?/, '').replace(/\x1b\[[0-9;]*[A-Za-z]/g, '');
+    let kind: LogLine['kind'] = 'plain';
+    const marker = /^##\[(\w+)\]/.exec(text);
+    if (marker) {
+      const name = marker[1].toLowerCase();
+      if (name === 'endgroup') continue;
+      text = text.slice(marker[0].length);
+      if (name === 'error' || name === 'warning' || name === 'group' || name === 'command') kind = name;
+    } else if (text.startsWith('[command]')) {
+      text = text.slice('[command]'.length);
+      kind = 'command';
+    }
+    lines.push({ text, kind });
+  }
+  while (lines.length && !lines[lines.length - 1].text) lines.pop();
+  return lines;
+}
+
 /** `just now`, `5m ago`, `3h ago`, `2d ago`. */
 export function timeAgo(iso: string, now = Date.now()): string {
   const seconds = Math.round((now - Date.parse(iso)) / 1000);
