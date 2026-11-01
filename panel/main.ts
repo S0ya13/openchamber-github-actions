@@ -1,14 +1,31 @@
 import { connectHost, HostRequestError, type GuestSettings } from '@openchamber/sdk';
-import { applyHostReady, mountBadge, mountBanner, mountButton, mountEmpty, mountMenu, mountSpinner, mountTabs, type ButtonHandle } from '@openchamber/sdk/ui';
-import { durationBetween, hasWorkflowDispatch, statusOf, timeAgo, type Repo } from './github';
+import {
+  applyHostReady,
+  mountBadge,
+  mountBanner,
+  mountButton,
+  mountEmpty,
+  mountMenu,
+  mountSpinner,
+  mountSwitch,
+  mountTabs,
+  type ButtonHandle,
+} from '@openchamber/sdk/ui';
+import { askInputs } from './dispatch';
+import { dispatchInputs, durationBetween, statusOf, timeAgo, type Repo } from './github';
 import { openLog } from './log';
 import {
+  clearUnseen,
   createApi,
   describeError,
   isRateLimit,
+  notifyEnabled,
+  notifyFailures,
+  notifyKey,
   PANEL_ID,
   resolveRepo,
   type Annotation,
+  type DispatchableWorkflow,
   type Job,
   type Run,
   type Workflow,
@@ -21,6 +38,7 @@ const PAGE = 20;
 const ACTIVE_POLL_MS = 10_000;
 const IDLE_POLL_MS = 60_000;
 const RATE_LIMIT_PAUSE_MS = 5 * 60_000;
+const COMPOSE_MAX = 16_000;
 
 const host = connectHost();
 const api = createApi(host);
@@ -49,7 +67,8 @@ const state = {
   fetchedAt: 0,
   pausedUntil: 0,
   autoExpand: true,
-  workflows: [] as Workflow[],
+  workflows: [] as DispatchableWorkflow[],
+  notify: true,
   expanded: new Set<number>(),
   jobs: new Map<number, Job[]>(),
   annotations: new Map<number, Annotation[]>(),
@@ -61,6 +80,10 @@ let pollTimer: ReturnType<typeof setTimeout> | undefined;
 let generation = 0;
 let refreshButton: ButtonHandle | null = null;
 let freshnessEl: HTMLElement | null = null;
+// In front of the user: the rail shows this panel and the window is not hidden. A
+// hidden rail panel keeps running, so it keeps watching at the idle pace.
+let onScreen = false;
+let visible = false;
 
 function append<K extends keyof HTMLElementTagNameMap>(parent: Element, tag: K, className = '', text?: string) {
   const node = document.createElement(tag);
@@ -95,10 +118,11 @@ async function loadWorkflows(): Promise<void> {
         .filter((workflow) => workflow.state === 'active' && workflow.path.startsWith('.github/workflows/'))
         .map(async (workflow) => {
           const file = await host.readFile(workflow.path).catch(() => null);
-          return file && hasWorkflowDispatch(file.content) ? workflow : null;
+          const inputs = file ? dispatchInputs(file.content) : null;
+          return inputs ? { ...workflow, inputs } : null;
         }),
     );
-    state.workflows = checks.filter((workflow): workflow is Workflow => workflow !== null);
+    state.workflows = checks.filter((workflow): workflow is DispatchableWorkflow => workflow !== null);
   } catch {
     state.workflows = [];
   }
@@ -107,10 +131,8 @@ async function loadWorkflows(): Promise<void> {
 function schedule(): void {
   clearTimeout(pollTimer);
   const active = state.runs?.some((run) => statusOf(run.status, run.conclusion).active);
-  const wait = Math.max(state.pausedUntil - Date.now(), active ? ACTIVE_POLL_MS : IDLE_POLL_MS);
-  pollTimer = setTimeout(() => {
-    if (!document.hidden) void refresh();
-  }, wait);
+  const wait = Math.max(state.pausedUntil - Date.now(), active && visible ? ACTIVE_POLL_MS : IDLE_POLL_MS);
+  pollTimer = setTimeout(() => void refresh(), wait);
 }
 
 async function refresh(): Promise<void> {
@@ -140,6 +162,13 @@ async function refresh(): Promise<void> {
       state.autoExpand = false;
     }
     for (const id of state.cancelSent) if (!state.runs.some((run) => run.id === id && statusOf(run.status, run.conclusion).active)) state.cancelSent.delete(id);
+    if (state.branch && state.notify) {
+      const branchRuns =
+        state.scope === 'branch'
+          ? state.runs
+          : (await api<{ workflow_runs: Run[] }>('GET', runPath('/runs'), { branch: state.branch, per_page: '10', exclude_pull_requests: 'true' })).workflow_runs;
+      await notifyFailures(host, repoName(), state.branch, branchRuns, visible);
+    }
     // Jobs of an expanded run are refetched only while it can still change.
     await Promise.all(
       state.runs
@@ -173,6 +202,7 @@ async function reload(): Promise<void> {
   if (!gate()) {
     const saved = await host.storage.get(scopeKey()).catch(() => undefined);
     state.scope = saved === 'all' || !state.branch ? 'all' : 'branch';
+    state.notify = await notifyEnabled(host, repoName());
     await loadWorkflows();
   }
   render();
@@ -201,7 +231,8 @@ function setScope(scope: Scope): void {
   void refresh();
 }
 
-async function debugInSession(run: Run): Promise<void> {
+/** The failed run, its failed jobs and their errors, and what to do about it. */
+function failureReport(run: Run, ask: string): string {
   const failed = (state.jobs.get(run.id) ?? []).filter((job) => statusOf(job.status, job.conclusion).tone === 'error');
   const lines = [
     `The GitHub Actions run "${run.name}" #${run.run_number} failed in ${repoName()}.`,
@@ -209,21 +240,36 @@ async function debugInSession(run: Run): Promise<void> {
     ...failed.map((job) => {
       const notes = (state.annotations.get(job.id) ?? [])
         .filter((note) => note.annotation_level === 'failure')
-        .map((note) => `  - ${note.path}:${note.start_line} ${note.message}`);
+        .map((note) => `  - ${note.path === '.github' ? '' : `${note.path}:${note.start_line} `}${note.message}`);
       return [`Failed job: ${job.name}`, ...notes].join('\n');
     }),
     '',
-    `Read the failed logs with \`gh run view ${run.id} --repo ${repoName()} --log-failed\`, find the root cause in this checkout, and propose a fix.`,
+    `Read the failed logs with \`gh run view ${run.id} --repo ${repoName()} --log-failed\`, ${ask}`,
   ];
+  return lines.join('\n');
+}
+
+async function debugInSession(run: Run): Promise<void> {
   try {
     await host.startSession({
       providerId: PANEL_ID,
       id: String(run.id),
       title: `CI: ${run.name} #${run.run_number} failed`,
       url: run.html_url,
-      text: lines.join('\n'),
+      text: failureReport(run, 'find the root cause in this checkout, and propose a fix.'),
       navigation: 'open',
     });
+  } catch (error) {
+    void host.toast({ kind: 'error', message: errorText(error) });
+  }
+}
+
+/** Hands the failure to the chat already open, so the agent that wrote the change fixes it. */
+async function fixInChat(run: Run): Promise<void> {
+  const text = failureReport(run, 'find the root cause, and fix it.');
+  try {
+    await host.compose({ text: text.length > COMPOSE_MAX ? `${text.slice(0, COMPOSE_MAX - 1)}…` : text, mode: 'append' });
+    void host.toast({ kind: 'info', message: 'The failure is in the chat box. Send it when ready.' });
   } catch (error) {
     void host.toast({ kind: 'error', message: errorText(error) });
   }
@@ -293,12 +339,25 @@ function renderHeader(): void {
       size: 'sm',
       variant: 'outline',
       items: state.workflows.map((workflow) => ({ id: String(workflow.id), label: workflow.name })),
-      onSelect: (id) => {
+      onSelect: async (id) => {
         const workflow = state.workflows.find((item) => String(item.id) === id)!;
-        void act(`dispatch-${id}`, `Started ${workflow.name} on ${state.branch}`, runPath(`/workflows/${id}/dispatches`), { ref: state.branch }).then(
-          // A dispatched run shows up in the list a few seconds later.
-          () => setTimeout(() => void refresh(), 3000),
-        );
+        const branch = state.branch!;
+        const inputs = workflow.inputs.length ? await askInputs(workflow.name, branch, workflow.inputs) : {};
+        if (!inputs) return;
+        await act(`dispatch-${id}`, `Started ${workflow.name} on ${branch}`, runPath(`/workflows/${id}/dispatches`), { ref: branch, inputs });
+        // A dispatched run shows up in the list a few seconds later.
+        setTimeout(() => void refresh(), 3000);
+      },
+    });
+  }
+  if (state.branch) {
+    const toggleNotify = mountSwitch(append(controls, 'span', 'notify-switch'), {
+      label: 'Notify',
+      checked: state.notify,
+      onChange: (checked) => {
+        state.notify = checked;
+        toggleNotify.update({ checked });
+        void host.storage.set(notifyKey(repoName()), checked).catch(() => undefined);
       },
     });
   }
@@ -312,7 +371,7 @@ function renderJob(parent: Element, job: Job): void {
   const row = append(parent, 'div', 'job');
   const head = append(row, 'div', 'job-head');
   mountBadge(append(head, 'span'), { label: status.label, tone: status.tone });
-  append(head, 'span', 'job-name', job.name);
+  append(head, 'span', 'job-name', job.name).title = job.name;
   append(head, 'span', 'muted', durationBetween(job.started_at, job.completed_at));
   const tools = append(head, 'span', 'job-tools');
   mountButton(append(tools, 'span'), { label: 'Log', size: 'xs', variant: 'ghost', onClick: () => openLog(host, repoName(), job) });
@@ -354,12 +413,12 @@ function renderRun(parent: Element, run: Run): void {
   summary.addEventListener('click', () => toggle(run));
   const top = append(summary, 'div', 'run-top');
   mountBadge(append(top, 'span'), { label: status.label, tone: status.tone });
-  append(top, 'span', 'run-name', `${run.name} #${run.run_number}`);
+  append(top, 'span', 'run-name', `${run.name} #${run.run_number}`).title = run.name;
   append(top, 'span', 'muted', timeAgo(run.created_at));
-  append(summary, 'div', 'run-title', run.display_title);
+  if (run.display_title !== run.name) append(summary, 'div', 'run-title', run.display_title).title = run.display_title;
   const meta = [run.head_branch, run.head_sha.slice(0, 7), run.event, durationBetween(run.run_started_at ?? run.created_at, status.active ? null : run.updated_at)];
   if (run.run_attempt > 1) meta.push(`attempt ${run.run_attempt}`);
-  append(summary, 'div', 'muted mono', meta.filter(Boolean).join(' · '));
+  append(summary, 'div', 'muted mono run-meta', meta.filter(Boolean).join(' · '));
   if (!open) return;
 
   const tools = append(card, 'div', 'run-tools');
@@ -379,6 +438,7 @@ function renderRun(parent: Element, run: Run): void {
   } else {
     if (status.tone === 'error') {
       button('Re-run failed', `failed-${run.id}`, () => void act(`failed-${run.id}`, 'Re-running failed jobs', runPath(`/runs/${run.id}/rerun-failed-jobs`)));
+      button('Fix in chat', null, () => void fixInChat(run));
       button('Debug in session', null, () => void debugInSession(run));
     }
     button('Re-run all', `rerun-${run.id}`, () => void act(`rerun-${run.id}`, 'Re-running all jobs', runPath(`/runs/${run.id}/rerun`)));
@@ -461,9 +521,19 @@ host.onSettings((settings) => {
   state.settings = settings;
   void reload();
 });
-document.addEventListener('visibilitychange', () => {
-  if (!document.hidden && Date.now() > state.pausedUntil) void refresh();
-});
+function updateVisible(): void {
+  const next = onScreen && !document.hidden;
+  if (next === visible) return;
+  visible = next;
+  if (!visible || !state.repo) return;
+  void clearUnseen(host, repoName());
+  if (Date.now() > state.pausedUntil) void refresh();
+}
+new IntersectionObserver((entries) => {
+  onScreen = entries.some((entry) => entry.isIntersecting);
+  updateVisible();
+}).observe(root);
+document.addEventListener('visibilitychange', updateVisible);
 const freshnessTimer = setInterval(renderFreshness, 5000);
 window.addEventListener('beforeunload', () => {
   clearTimeout(pollTimer);

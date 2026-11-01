@@ -7,8 +7,10 @@ An [OpenChamber](https://openchamber.dev) extension that shows the GitHub Action
 - **Runs.** The workflow runs of the current branch, or of all branches, newest first, with **Load more**. The branch or all choice is remembered per repository. A newest run that is running or failed opens by itself. The list refreshes every 10 s while a run is active and every 60 s otherwise, only while the panel is visible, follows a branch switch in the checkout, and pauses when GitHub rate-limits it.
 - **Jobs.** Expand a run into its jobs, with the failing or running step and the error annotations GitHub extracted.
 - **Log drawer.** Open any job's log beside the list: workflow markers rendered, errors highlighted, **Find in log** (`Ctrl/Cmd+F`, `Enter` for the next match), **Jump to error**, **Copy**.
-- **Actions.** Re-run all jobs, re-run failed jobs, re-run one job, cancel and then force-cancel, and **Run workflow** for workflows with a `workflow_dispatch` trigger on the current branch.
-- **Debug in session.** Starts an OpenChamber session with the failed run, its jobs and errors, and asks the agent to read the log with `gh run view --log-failed` and find the cause in your checkout.
+- **Actions.** Re-run all jobs, re-run failed jobs, re-run one job, cancel and then force-cancel, and **Run workflow** for workflows with a `workflow_dispatch` trigger on the current branch, with a form for the workflow's inputs (text, number, choice, boolean).
+- **Fix in chat.** Puts the failed run, its failed jobs and their errors into the chat box of the session you have open, so the agent that wrote the change fixes it.
+- **Debug in session.** Starts a new OpenChamber session with the same failure report, and asks the agent to read the log with `gh run view --log-failed` and find the cause in your checkout.
+- **Failure notifications.** When a run on the current branch fails while you are elsewhere, a toast names it and the rail icon gets a badge; opening the panel clears it. The panel (open in the rail) and the Work Status section watch on their own; failures that happened while neither was open are reported the next time one is. Switch it off per repository with **Notify**.
 - **Work Status section.** The newest run of each workflow on the current branch, next to the chat. Click one to open the panel.
 
 ## Install
@@ -26,7 +28,7 @@ The extension needs OpenChamber **1.22 or newer**.
 
 - The panel never sees the token. It lives in OpenChamber's Integrations, and OpenChamber itself calls `https://api.github.com`, the only origin the extension may reach.
 - Logs go through a small local service, because GitHub serves job logs through a redirect to blob storage and OpenChamber's extension requests do not follow redirects. The service binds loopback only, requires the host-issued bearer on every request, and runs one command: `gh api repos/<owner>/<repo>/actions/jobs/<id>/logs`, using your own `gh` login. Very long logs keep their last 3 MB.
-- The extension reads only `.git/config` and `.git/HEAD` (also a linked worktree's), and the workflow files of the open project to find `workflow_dispatch`.
+- The extension reads only `.git/config` and `.git/HEAD` (also a linked worktree's), and the workflow files of the open project to find `workflow_dispatch` and its inputs.
 
 ## Develop
 

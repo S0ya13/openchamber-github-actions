@@ -1,6 +1,6 @@
 {
   "name": "github-actions-openchamber",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "description": "OpenChamber panel showing GitHub Actions workflow runs for the open project, with re-run and cancel.",
   "license": "MIT",
@@ -16,7 +16,8 @@
   "devDependencies": {
     "@openchamber/sdk": "2.5.3",
     "@types/bun": "^1.4.4",
-    "typescript": "^7.0.2"
+    "typescript": "^7.0.2",
+    "yaml": "2.9.1"
   },
   "openchamber": {
     "apiVersion": 1,

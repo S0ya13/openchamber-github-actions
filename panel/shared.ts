@@ -1,6 +1,6 @@
 /** What the panel and the Work Status section share: GitHub types, the API call and repo resolution. */
 import { HostRequestError, type GuestSettings, type HostClient } from '@openchamber/sdk';
-import { branchFromHead, linkedGitDirs, parseRepoSetting, repoFromGitConfig, type Repo } from './github';
+import { branchFromHead, linkedGitDirs, parseRepoSetting, repoFromGitConfig, statusOf, type DispatchInput, type Repo } from './github';
 
 export const PANEL_ID = 'github-actions';
 
@@ -39,6 +39,8 @@ export type Annotation = { path: string; start_line: number; annotation_level: s
 
 export type Workflow = { id: number; name: string; path: string; state: string };
 
+export type DispatchableWorkflow = Workflow & { inputs: DispatchInput[] };
+
 export class ApiError extends Error {
   constructor(readonly status: number, message: string) {
     super(message);
@@ -73,6 +75,51 @@ export function describeError(error: unknown, repo: Repo | null): string {
     return `${repo.owner}/${repo.name} is not visible to this token. Give the token access to this repository (fine-grained: Repository access + Actions read).`;
   }
   return error instanceof Error ? error.message : String(error);
+}
+
+export const notifyKey = (repo: string) => `notify:${repo}`;
+const seenKey = (repo: string, branch: string) => `seen:${repo}:${branch}`;
+const unseenKey = (repo: string) => `unseen:${repo}`;
+
+/** Notifications are on unless the user switched them off for this repository. */
+export async function notifyEnabled(host: HostClient, repo: string): Promise<boolean> {
+  return (await host.storage.get(notifyKey(repo)).catch(() => undefined)) !== false;
+}
+
+/**
+ * Toast and badge the runs of the watched branch that failed since the last
+ * check. The watermark is the newest `updated_at` seen, kept in host storage so
+ * the panel and the Work Status section share it and a failure toasts once.
+ * The first check only sets the watermark: history never toasts. A `quiet`
+ * caller (the visible panel) advances the watermark without telling anyone.
+ */
+export async function notifyFailures(host: HostClient, repo: string, branch: string, runs: Run[], quiet = false): Promise<void> {
+  const seen = await host.storage.get(seenKey(repo, branch)).catch(() => undefined);
+  const completed = runs.filter((run) => run.status === 'completed');
+  const newest = completed.reduce((max, run) => (run.updated_at > max ? run.updated_at : max), typeof seen === 'string' ? seen : '');
+  if (typeof seen !== 'string') {
+    await host.storage.set(seenKey(repo, branch), newest || new Date().toISOString()).catch(() => undefined);
+    return;
+  }
+  if (newest === seen) return;
+  await host.storage.set(seenKey(repo, branch), newest).catch(() => undefined);
+  const failed = completed.filter((run) => run.updated_at > seen && statusOf(run.status, run.conclusion).tone === 'error');
+  if (quiet || !failed.length) return;
+  const stored = await host.storage.get(unseenKey(repo)).catch(() => undefined);
+  const unseen = (typeof stored === 'number' ? stored : 0) + failed.length;
+  await host.storage.set(unseenKey(repo), unseen).catch(() => undefined);
+  void host.setBadge(unseen).catch(() => undefined);
+  const run = failed[0];
+  void host.toast({
+    kind: 'error',
+    message: failed.length === 1 ? `${run.name} #${run.run_number} failed on ${branch} (${repo})` : `${failed.length} workflow runs failed on ${branch} (${repo})`,
+  });
+}
+
+/** The panel is in front of the user: the failures they could have missed are seen now. */
+export async function clearUnseen(host: HostClient, repo: string): Promise<void> {
+  await host.storage.set(unseenKey(repo), 0).catch(() => undefined);
+  void host.setBadge(null).catch(() => undefined);
 }
 
 async function readText(host: HostClient, path: string): Promise<string | null> {

@@ -11,7 +11,7 @@ html, body { margin: 0; background: var(--oc-bg); color: var(--oc-fg); font-fami
 .body { display: flex; flex-direction: column; gap: 10px; }
 .header-title { display: flex; flex-direction: column; min-width: 0; }
 .repo { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.header-controls { display: flex; align-items: center; gap: 6px; }
+.header-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 
 .runs { display: flex; flex-direction: column; gap: 6px; }
 .run { border: 1px solid var(--oc-border); border-radius: var(--oc-radius); overflow: hidden; }
@@ -24,7 +24,7 @@ html, body { margin: 0; background: var(--oc-bg); color: var(--oc-fg); font-fami
 .run-summary:focus-visible { outline: 2px solid var(--oc-focus); outline-offset: -2px; }
 .run-top { display: flex; align-items: center; gap: 8px; }
 .run-name { flex: 1; min-width: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.run-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.run-title, .run-meta { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .run-tools { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 10px 8px; }
 
 .jobs { display: flex; flex-direction: column; border-top: 1px solid var(--oc-border); }
@@ -45,8 +45,8 @@ html, body { margin: 0; background: var(--oc-bg); color: var(--oc-fg); font-fami
   position: fixed; inset: 0; z-index: 10; display: flex; flex-direction: column;
   background: var(--oc-bg); color: var(--oc-fg);
 }
-.drawer-head { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-bottom: 1px solid var(--oc-border); }
-.drawer-title { flex: 1; min-width: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.drawer-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; padding: 8px 10px; border-bottom: 1px solid var(--oc-border); }
+.drawer-title { flex: 1 1 100%; min-width: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .drawer-tools { display: flex; flex-wrap: wrap; gap: 2px; }
 .drawer-find { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-bottom: 1px solid var(--oc-border); }
 .find-input {
@@ -55,6 +55,8 @@ html, body { margin: 0; background: var(--oc-bg); color: var(--oc-fg); font-fami
 }
 .find-input:focus-visible { outline: 2px solid var(--oc-focus); outline-offset: -1px; }
 .drawer-body { flex: 1; overflow: auto; }
+.form-fields { display: flex; flex-direction: column; gap: 12px; padding: 12px; }
+.form-tools { display: flex; gap: 6px; padding: 10px 12px; border-top: 1px solid var(--oc-border); }
 .log-note { padding: 6px 10px; }
 .log { font-family: var(--oc-mono); font-size: 12px; line-height: 1.5; padding: 4px 0; }
 .line { display: flex; gap: 10px; padding: 0 10px; content-visibility: auto; contain-intrinsic-size: auto 18px; }

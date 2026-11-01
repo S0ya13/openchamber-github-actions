@@ -2,7 +2,7 @@
 import { connectHost, type GuestSettings } from '@openchamber/sdk';
 import { applyHostReady, mountBadge } from '@openchamber/sdk/ui';
 import { statusOf, timeAgo, type Repo } from '../panel/github';
-import { createApi, describeError, PANEL_ID, resolveRepo, type Run } from '../panel/shared';
+import { createApi, describeError, notifyEnabled, notifyFailures, PANEL_ID, resolveRepo, type Run } from '../panel/shared';
 import { STATUS_CSS } from '../panel/styles';
 
 const SHOWN = 3;
@@ -64,6 +64,8 @@ async function refresh(): Promise<void> {
       exclude_pull_requests: 'true',
     });
     if (mine !== generation) return;
+    const repoName = `${owner}/${name}`;
+    if (await notifyEnabled(host, repoName)) await notifyFailures(host, repoName, target.branch, data.workflow_runs);
     // The newest run of each workflow says where the branch stands.
     const latest = data.workflow_runs.filter((run, index, runs) => runs.findIndex((other) => other.workflow_id === run.workflow_id) === index);
     active = latest.some((run) => statusOf(run.status, run.conclusion).active);

@@ -3,8 +3,8 @@ import { parseManifestJson } from '@openchamber/sdk/schemas';
 import { readFileSync } from 'node:fs';
 import {
   branchFromHead,
+  dispatchInputs,
   durationBetween,
-  hasWorkflowDispatch,
   linkedGitDirs,
   parseGitHubRemote,
   parseLog,
@@ -13,6 +13,8 @@ import {
   statusOf,
 } from '../panel/github';
 import { handleLog, type GhResult, type GhRunner } from '../service/main';
+import { clearUnseen, notifyFailures, type Run } from '../panel/shared';
+import type { HostClient } from '@openchamber/sdk';
 
 test('manifest parses', () => {
   const result = parseManifestJson(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
@@ -65,12 +67,32 @@ test('status and duration', () => {
   expect(durationBetween(null, null)).toBe('');
 });
 
-test('workflow_dispatch detection', () => {
-  expect(hasWorkflowDispatch('on:\n  push:\n  workflow_dispatch:\n    inputs: {}\n')).toBe(true);
-  expect(hasWorkflowDispatch('on: [push, workflow_dispatch]\n')).toBe(true);
-  expect(hasWorkflowDispatch('on: workflow_dispatch\n')).toBe(true);
-  expect(hasWorkflowDispatch('on: push\n# workflow_dispatch: later\n')).toBe(false);
-  expect(hasWorkflowDispatch('on: push\n')).toBe(false);
+test('workflow_dispatch inputs', () => {
+  expect(dispatchInputs('on: workflow_dispatch\n')).toEqual([]);
+  expect(dispatchInputs('on: [push, workflow_dispatch]\n')).toEqual([]);
+  expect(dispatchInputs('on: push\n# workflow_dispatch: later\n')).toBeNull();
+  expect(dispatchInputs('on:\n  push:\n')).toBeNull();
+  expect(dispatchInputs('on: [unclosed\n')).toBeNull();
+  const yaml = `on:
+  push:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Where to deploy
+        required: true
+        type: choice
+        options: [staging, production]
+        default: staging
+      dry_run:
+        type: boolean
+        default: false
+      note:
+`;
+  expect(dispatchInputs(yaml)).toEqual([
+    { name: 'environment', description: 'Where to deploy', type: 'choice', required: true, default: 'staging', options: ['staging', 'production'] },
+    { name: 'dry_run', description: '', type: 'boolean', required: false, default: 'false', options: [] },
+    { name: 'note', description: '', type: 'string', required: false, default: '', options: [] },
+  ]);
 });
 
 test('log parsing', () => {
@@ -121,4 +143,37 @@ test('log service falls back on old gh', async () => {
   };
   expect((await handleLog(query('o/r', '7'), runner)).status).toBe(200);
   expect(calls[1]).toEqual(['api', 'repos/o/r/actions/jobs/7/logs']);
+});
+
+test('failure notifications toast each new failure once', async () => {
+  const store = new Map<string, unknown>();
+  const toasts: string[] = [];
+  const badges: Array<number | null> = [];
+  const host = {
+    storage: {
+      get: async (key: string) => store.get(key),
+      set: async (key: string, value: unknown) => void store.set(key, value),
+    },
+    toast: async ({ message }: { message: string }) => void toasts.push(message),
+    setBadge: async (count: number | null) => void badges.push(count),
+  } as unknown as HostClient;
+  const run = (id: number, conclusion: string | null, updated: string): Run =>
+    ({ id, name: 'CI', run_number: id, status: conclusion ? 'completed' : 'in_progress', conclusion, updated_at: updated }) as Run;
+
+  // History never toasts: the first look only sets the watermark.
+  await notifyFailures(host, 'o/r', 'main', [run(1, 'failure', '2026-11-01T10:00:00Z')]);
+  expect(toasts).toEqual([]);
+
+  const runs = [run(3, 'failure', '2026-11-01T11:00:00Z'), run(2, null, '2026-11-01T10:30:00Z'), run(1, 'failure', '2026-11-01T10:00:00Z')];
+  await notifyFailures(host, 'o/r', 'main', runs);
+  await notifyFailures(host, 'o/r', 'main', runs);
+  expect(toasts).toEqual(['CI #3 failed on main (o/r)']);
+  expect(badges).toEqual([1]);
+
+  // The visible panel moves the watermark without a toast.
+  await notifyFailures(host, 'o/r', 'main', [run(4, 'failure', '2026-11-01T12:00:00Z'), ...runs], true);
+  expect(toasts).toHaveLength(1);
+  await clearUnseen(host, 'o/r');
+  expect(store.get('unseen:o/r')).toBe(0);
+  expect(badges.at(-1)).toBeNull();
 });

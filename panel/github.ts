@@ -1,4 +1,5 @@
 /** Pure helpers: git metadata parsing and GitHub Actions formatting. No host calls here. */
+import { parse } from 'yaml';
 
 export type Repo = { owner: string; name: string };
 
@@ -99,9 +100,41 @@ export function durationBetween(start: string | null | undefined, end: string | 
   return Number.isFinite(from) && Number.isFinite(to) ? formatDuration(to - from) : '';
 }
 
-/** True when a workflow file can be started by hand (`on: workflow_dispatch` in any of its forms). */
-export function hasWorkflowDispatch(yaml: string): boolean {
-  return /^[^#\n]*\bworkflow_dispatch\b/m.test(yaml);
+export type DispatchInput = {
+  name: string;
+  description: string;
+  type: 'string' | 'choice' | 'boolean' | 'number' | 'environment';
+  required: boolean;
+  default: string;
+  options: string[];
+};
+
+/**
+ * The inputs of a workflow that can be started by hand, or null when its `on:`
+ * has no `workflow_dispatch`. Accepts the string, list and map forms of `on:`.
+ */
+export function dispatchInputs(yaml: string): DispatchInput[] | null {
+  let on: unknown;
+  try {
+    on = (parse(yaml) as { on?: unknown } | null)?.on;
+  } catch {
+    return null;
+  }
+  if (on === 'workflow_dispatch') return [];
+  if (Array.isArray(on)) return on.includes('workflow_dispatch') ? [] : null;
+  if (!on || typeof on !== 'object' || !('workflow_dispatch' in on)) return null;
+  const inputs = ((on as Record<string, { inputs?: unknown } | null>).workflow_dispatch?.inputs ?? {}) as Record<string, Record<string, unknown> | null>;
+  return Object.entries(inputs).map(([name, spec]) => {
+    const type = String(spec?.type ?? 'string');
+    return {
+      name,
+      description: String(spec?.description ?? ''),
+      type: (['choice', 'boolean', 'number', 'environment'].includes(type) ? type : 'string') as DispatchInput['type'],
+      required: spec?.required === true,
+      default: spec?.default == null ? '' : String(spec.default),
+      options: Array.isArray(spec?.options) ? spec.options.map(String) : [],
+    };
+  });
 }
 
 export type LogLine = { text: string; kind: 'plain' | 'error' | 'warning' | 'group' | 'command' };
